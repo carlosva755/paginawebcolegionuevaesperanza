@@ -1,0 +1,108 @@
+services:
+  # ----------------------------------------------------------------------------
+  # Relational Database Server (PostgreSQL 16)
+  # Hosts two isolated databases: alertas_db and acompanamiento_db
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ied-postgres-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_secure_pass_2026}
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - plataforma-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # Microservice 1: alertas-service (ASP.NET Core Web API in C# .NET 8)
+  # Scope: Students, Attendance Tracking, Surveys, and Risk Calculation
+  # ----------------------------------------------------------------------------
+  alertas-service:
+    build:
+      context: ./alertas-service
+      dockerfile: Dockerfile
+    container_name: ied-alertas-service
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=alertas_db;Username=${DB_USER:-postgres};Password=${DB_PASSWORD:-postgres_secure_pass_2026};
+      - Jwt__Key=${JWT_SECRET:-ClaveSecretaSuperSeguraParaJWTEnNuevaEsperanzaSoacha2026Minimo32Caracteres!}
+      - Jwt__Issuer=${JWT_ISSUER:-NuevaEsperanzaAuthServer}
+      - Jwt__Audience=${JWT_AUDIENCE:-NuevaEsperanzaPlatform}
+      - Jwt__ExpirationMinutes=${JWT_EXPIRATION_MINUTES:-60}
+    ports:
+      - "5001:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - plataforma-net
+
+  # ----------------------------------------------------------------------------
+  # Microservice 2: acompanamiento-service (Node.js 20 + Express + Sequelize)
+  # Scope: Cases, Intervention Plans, Notifications, and Dashboard Indicators
+  # ----------------------------------------------------------------------------
+  acompanamiento-service:
+    build:
+      context: ./acompanamiento-service
+      dockerfile: Dockerfile
+    container_name: ied-acompanamiento-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres_secure_pass_2026}@postgres:5432/acompanamiento_db
+      - JWT_SECRET=${JWT_SECRET:-ClaveSecretaSuperSeguraParaJWTEnNuevaEsperanzaSoacha2026Minimo32Caracteres!}
+      - JWT_ISSUER=${JWT_ISSUER:-NuevaEsperanzaAuthServer}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-NuevaEsperanzaPlatform}
+      - JWT_EXPIRATION_MINUTES=${JWT_EXPIRATION_MINUTES:-60}
+      - ALERTAS_SERVICE_URL=http://alertas-service:8080/api/v1
+    ports:
+      - "5002:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - plataforma-net
+
+  # ----------------------------------------------------------------------------
+  # Frontend Application (React 18 + Vite + TailwindCSS + Nginx)
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_ALERTAS_API_URL=http://localhost:5001/api/v1
+        - VITE_ACOMPANAMIENTO_API_URL=http://localhost:5002/api/v1
+    container_name: ied-frontend-app
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - alertas-service
+      - acompanamiento-service
+    networks:
+      - plataforma-net
+
+networks:
+  plataforma-net:
+    driver: bridge
+    name: plataforma-net
+
+volumes:
+  postgres_data:
+    name: ied_postgres_data
